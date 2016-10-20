@@ -39,7 +39,6 @@ module System.Poll.EPoll
     , epollHup
     , epollET
     , epollOneShot
-    , epollWakeUp
     , Op
     , controlOpAdd
     , controlOpModify
@@ -166,7 +165,6 @@ newtype EventType = EventType {
  , epollHup = EPOLLHUP
  , epollET = EPOLLET
  , epollOneShot = EPOLLONESHOT
- , epollWakeUp = EPOLLWAKEUP
  }
 
 -- | Create a new epoll context, returning a file descriptor associated with the context.
