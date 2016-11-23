@@ -68,6 +68,7 @@ import Foreign.C.Error (eINTR, getErrno, throwErrno)
 import Text.Show (show)
 import Foreign.C.Types (CInt)
 import Prelude (putStrLn)
+import Data.Maybe (fromMaybe)
 
 data EPoll = EPoll {
       epollFd     :: {-# UNPACK #-} !EPollFd
@@ -103,17 +104,22 @@ wait ::
      EPoll
   -> Maybe CInt
   -- ^ timeout in milliseconds. If 'Nothing', 'wait' will block indefinitely.
+  -> Bool
+  -- ^ Whether the call to epoll_wait should be unsafe. If unsafe, the
+  -- Haskell runtime will be able to do nothing else but wait for epoll_wait
+  -- to finish, so use with care.
   -> IO (V.Vector Event)
-wait ep mtimeout = do
+wait ep mtimeout unsafe = do
   let events = epollEvents ep
   let fd = epollFd ep
   let cap = fromIntegral (VM.length events)
 
   -- Will return zero if the system call was interrupted, in which case
   -- we just return (and try again later.)
-  n <- VM.unsafeWith events $ \es -> case mtimeout of
-    Just timeout -> epollWait fd es cap timeout
-    Nothing -> epollWait fd es cap (-1) -- ^ Wait indefinitely
+  let timeout = fromMaybe (-1) mtimeout -- Wait indefinitely if no timeout is provided
+  n <- VM.unsafeWith events $ \es -> if unsafe
+    then epollWaitUnsafe fd es cap timeout
+    else epollWait fd es cap timeout
 
   -- TODO remove this check
   when (n < 0 || n > cap) $
@@ -200,6 +206,11 @@ epollWait (EPollFd epfd) events numEvents timeout =
     throwErrnoIfMinus1NoRetry "epollWait" $
     c_epoll_wait epfd events numEvents timeout
 
+epollWaitUnsafe :: EPollFd -> Ptr Event -> CInt -> CInt -> IO CInt
+epollWaitUnsafe (EPollFd epfd) events numEvents timeout =
+  throwErrnoIfMinus1NoRetry "epollWaitUnsafe" $
+  c_epoll_wait_unsafe epfd events numEvents timeout
+
 foreign import ccall unsafe "sys/epoll.h epoll_create"
     c_epoll_create :: CInt -> IO CInt
 
@@ -208,6 +219,10 @@ foreign import ccall unsafe "sys/epoll.h epoll_ctl"
 
 foreign import ccall safe "sys/epoll.h epoll_wait"
     c_epoll_wait :: CInt -> Ptr Event -> CInt -> CInt -> IO CInt
+
+foreign import ccall unsafe "sys/epoll.h epoll_wait"
+    c_epoll_wait_unsafe :: CInt -> Ptr Event -> CInt -> CInt -> IO CInt
+
 
 -- | Throw an 'IOError' corresponding to the current value of
 -- 'getErrno' if the result value of the 'IO' action is -1 and
