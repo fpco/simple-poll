@@ -67,6 +67,7 @@ import qualified Data.Vector.Storable as V
 import Foreign.C.Error (eINTR, getErrno, throwErrno)
 import Text.Show (show)
 import Foreign.C.Types (CInt)
+import Prelude (putStrLn)
 
 data EPoll = EPoll {
       epollFd     :: {-# UNPACK #-} !EPollFd
@@ -100,7 +101,8 @@ control ep op fd event =
 {-# INLINE wait #-}
 wait ::
      EPoll
-  -> Maybe CInt -- ^ timeout in milliseconds
+  -> Maybe CInt
+  -- ^ timeout in milliseconds. If 'Nothing', 'wait' will block indefinitely.
   -> IO (V.Vector Event)
 wait ep mtimeout = do
   let events = epollEvents ep
@@ -111,12 +113,14 @@ wait ep mtimeout = do
   -- we just return (and try again later.)
   n <- VM.unsafeWith events $ \es -> case mtimeout of
     Just timeout -> epollWait fd es cap timeout
-    Nothing -> epollWaitNonBlock fd es cap
+    Nothing -> epollWait fd es cap (-1) -- ^ Wait indefinitely
 
   -- TODO remove this check
   when (n < 0 || n > cap) $
     fail $ "EPoll impossible: got less than 0 or greater than cap " ++ show cap
 
+  -- when (n == 0) $
+  --   putStrLn "GOT n == 0"
   V.freeze (VM.unsafeTake (fromIntegral n) events)
 
 newtype EPollFd = EPollFd {
@@ -196,11 +200,6 @@ epollWait (EPollFd epfd) events numEvents timeout =
     throwErrnoIfMinus1NoRetry "epollWait" $
     c_epoll_wait epfd events numEvents timeout
 
-epollWaitNonBlock :: EPollFd -> Ptr Event -> CInt -> IO CInt
-epollWaitNonBlock (EPollFd epfd) events numEvents =
-  throwErrnoIfMinus1NoRetry "epollWaitNonBlock" $
-  c_epoll_wait_unsafe epfd events numEvents 0
-
 foreign import ccall unsafe "sys/epoll.h epoll_create"
     c_epoll_create :: CInt -> IO CInt
 
@@ -209,9 +208,6 @@ foreign import ccall unsafe "sys/epoll.h epoll_ctl"
 
 foreign import ccall safe "sys/epoll.h epoll_wait"
     c_epoll_wait :: CInt -> Ptr Event -> CInt -> CInt -> IO CInt
-
-foreign import ccall unsafe "sys/epoll.h epoll_wait"
-    c_epoll_wait_unsafe :: CInt -> Ptr Event -> CInt -> CInt -> IO CInt
 
 -- | Throw an 'IOError' corresponding to the current value of
 -- 'getErrno' if the result value of the 'IO' action is -1 and
@@ -224,5 +220,5 @@ throwErrnoIfMinus1NoRetry loc f = do
     if res == -1
         then do
             err <- getErrno
-            if err == eINTR then return 0 else throwErrno loc
+            if err == eINTR then putStrLn "GOT EINTR" >> return 0 else throwErrno loc
         else return res
