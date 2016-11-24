@@ -102,21 +102,21 @@ control ep op fd event =
 {-# INLINE wait #-}
 wait ::
      EPoll
-  -> Maybe CInt
-  -- ^ timeout in milliseconds. If 'Nothing', 'wait' will block indefinitely.
+  -> CInt
+  -- ^ timeout in milliseconds. If -1, wait indefinitely. See the man page for
+  -- epoll_wait for more info on the timeout.
   -> Bool
   -- ^ Whether the call to epoll_wait should be unsafe. If unsafe, the
   -- Haskell runtime will be able to do nothing else but wait for epoll_wait
   -- to finish, so use with care.
   -> IO (V.Vector Event)
-wait ep mtimeout unsafe = do
+wait ep timeout unsafe = do
   let events = epollEvents ep
   let fd = epollFd ep
   let cap = fromIntegral (VM.length events)
 
   -- Will return zero if the system call was interrupted, in which case
   -- we just return (and try again later.)
-  let timeout = fromMaybe (-1) mtimeout -- Wait indefinitely if no timeout is provided
   n <- VM.unsafeWith events $ \es -> if unsafe
     then epollWaitUnsafe fd es cap timeout
     else epollWait fd es cap timeout
@@ -125,8 +125,6 @@ wait ep mtimeout unsafe = do
   when (n < 0 || n > cap) $
     fail $ "EPoll impossible: got less than 0 or greater than cap " ++ show cap
 
-  -- when (n == 0) $
-  --   putStrLn "GOT n == 0"
   V.freeze (VM.unsafeTake (fromIntegral n) events)
 
 newtype EPollFd = EPollFd {
