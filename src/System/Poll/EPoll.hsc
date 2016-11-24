@@ -233,5 +233,5 @@ throwErrnoIfMinus1NoRetry loc f = do
     if res == -1
         then do
             err <- getErrno
-            if err == eINTR then putStrLn "GOT EINTR" >> return 0 else throwErrno loc
+            if err == eINTR then return 0 else throwErrno loc
         else return res
