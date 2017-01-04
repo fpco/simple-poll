@@ -28,6 +28,7 @@ module System.Poll.EPoll
     , delete
     , with
     , control
+    , CallSafety(..)
     , wait
     , Event(..)
     , EventType
@@ -99,16 +100,24 @@ control :: EPoll -> Op -> Fd -> EventType -> IO ()
 control ep op fd event =
   Foreign.Marshal.Utils.with (Event event fd) (epollControl (epollFd ep) op fd)
 
+data CallSafety
+  = Safe
+  | Unsafe
+  deriving (Eq, Show)
+
 {-# INLINE wait #-}
 wait ::
      EPoll
   -> CInt
   -- ^ timeout in milliseconds. If -1, wait indefinitely. See the man page for
   -- epoll_wait for more info on the timeout.
-  -> Bool
-  -- ^ Whether the call to epoll_wait should be unsafe. If unsafe, the
+  -> CallSafety
+  -- ^ Whether the call to epoll_wait should be safe or unsafe. If unsafe, the
   -- Haskell runtime will be able to do nothing else but wait for epoll_wait
   -- to finish, so use with care.
+  --
+  -- The 'Unsafe' call is mostly useful to call @epoll_wait@ non-blockingly
+  -- with a timeout of 0, since we know the syscall will return immediately.
   -> IO (V.Vector Event)
 wait ep timeout unsafe = do
   let events = epollEvents ep
@@ -117,13 +126,9 @@ wait ep timeout unsafe = do
 
   -- Will return zero if the system call was interrupted, in which case
   -- we just return (and try again later.)
-  n <- VM.unsafeWith events $ \es -> if unsafe
-    then epollWaitUnsafe fd es cap timeout
-    else epollWait fd es cap timeout
-
-  -- TODO remove this check
-  when (n < 0 || n > cap) $
-    fail $ "EPoll impossible: got less than 0 or greater than cap " ++ show cap
+  n <- VM.unsafeWith events $ \es -> case unsafe of
+    Unsafe -> epollWaitUnsafe fd es cap timeout
+    Safe -> epollWait fd es cap timeout
 
   V.freeze (VM.unsafeTake (fromIntegral n) events)
 
@@ -136,7 +141,6 @@ data Event = Event {
     , eventFd    :: Fd
     } deriving (Show)
 
--- | @since 4.3.1.0
 instance Storable Event where
     sizeOf    _ = #size struct epoll_event
     alignment _ = alignment (undefined :: CInt)
